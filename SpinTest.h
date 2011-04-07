@@ -11,6 +11,8 @@ typedef nx_struct radio_msg {
 
 typedef nx_struct serial_msg {
   nx_uint16_t cmd;
+  nx_uint32_t time;
+  nx_uint16_t nid;
 } serial_msg_t;
 
 enum {

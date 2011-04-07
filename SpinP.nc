@@ -1,31 +1,7 @@
-// $Id: LedsP.nc,v 1.6 2008/06/24 05:32:32 regehr Exp $
-
-/*
- * "Copyright (c) 2000-2005 The Regents of the University  of California.  
- * All rights reserved.
- *
- * Permission to use, copy, modify, and distribute this software and its
- * documentation for any purpose, without fee, and without written agreement is
- * hereby granted, provided that the above copyright notice, the following
- * two paragraphs and the author appear in all copies of this software.
- * 
- * IN NO EVENT SHALL THE UNIVERSITY OF CALIFORNIA BE LIABLE TO ANY PARTY FOR
- * DIRECT, INDIRECT, SPECIAL, INCIDENTAL, OR CONSEQUENTIAL DAMAGES ARISING OUT
- * OF THE USE OF THIS SOFTWARE AND ITS DOCUMENTATION, EVEN IF THE UNIVERSITY OF
- * CALIFORNIA HAS BEEN ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- * 
- * THE UNIVERSITY OF CALIFORNIA SPECIFICALLY DISCLAIMS ANY WARRANTIES,
- * INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY
- * AND FITNESS FOR A PARTICULAR PURPOSE.  THE SOFTWARE PROVIDED HEREUNDER IS
- * ON AN "AS IS" BASIS, AND THE UNIVERSITY OF CALIFORNIA HAS NO OBLIGATION TO
- * PROVIDE MAINTENANCE, SUPPORT, UPDATES, ENHANCEMENTS, OR MODIFICATIONS."
- */
-
 /**
- * The implementation of the standard 3 LED mote abstraction.
+ * The implementation of the SPIN protocol.
  *
- * @author Joe Polastre
- * @author Philip Levis
+ * @author Artem Aginskiy
  *
  * @date   March 21, 2005
  */
@@ -61,6 +37,8 @@ implementation {
   bool        syncedBefore = FALSE;
   bool        spinTransmitting = FALSE;
   uint16_t receivedTime = 0;
+  uint32_t statCache[8]={0};
+  uint8_t cacheInd=0;
   
   // Depth 1 Queue
   message_t radioQueue;
@@ -69,7 +47,14 @@ implementation {
   message_t* ONE receive(am_id_t id, message_t* ONE msg, void* payload, uint8_t len);
   void advertise();
   void request();
+  uint16_t globalTime();
   
+  uint16_t globalTime() {
+      return call LocalTime.get() - clockphase;
+  }
+  
+  // Initialize Clock Sync across the network using flooding
+  // The calling node becomes global time
   async command void SpinIF.sendClockSync() {
     message_t* msg;
     spin_meta_msg_t* radiorcm;
@@ -81,12 +66,42 @@ implementation {
     }
     atomic
     {
-      radiorcm->cnt = call LocalTime.get() - clockphase; 
+      if (TOS_NODE_ID == 1) {
+        radiorcm->cnt = call LocalTime.get(); 
+      } else {
+        radiorcm->cnt = call LocalTime.get() - clockphase; 
+        
+      }
     }
     radiorcm->type = 2;
     
     if (call RadioSend.send[AM_SPIN_META_MSG](AM_BROADCAST_ADDR, msg, sizeof(spin_meta_msg_t)) == SUCCESS) {
-      //dbg("Spin", "Spin: Clock 'SYNC' packet sent with content = %hu.\n", radiorcm->cnt);	
+      dbg("Spin", "<%i>: 'SYNC' packet sent with content = %hu.\n", globalTime(), radiorcm->cnt);	
+      atomic
+        radioBusy = TRUE;
+    }
+  }
+  
+  async command void SpinIF.sendStat() {
+    message_t* msg;
+    spin_meta_msg_t* radiorcm;
+    msg = &radioQueue;
+    
+    dbg("Spin2", "sendStat()\n");
+    
+    radiorcm = (spin_meta_msg_t*)call RadioPacket.getPayload(msg, sizeof(spin_meta_msg_t));
+    if (radiorcm == NULL) {
+      return;
+    }
+    atomic
+    {
+      radiorcm->cnt = receivedTime; 
+    }
+    radiorcm->type = 5;
+    radiorcm->nid = TOS_NODE_ID;
+    
+    if (call RadioSend.send[AM_SPIN_META_MSG](AM_BROADCAST_ADDR, msg, sizeof(spin_meta_msg_t)) == SUCCESS) {
+      dbg("Spin2", "<%i>: 'SYNC' packet sent with type = %hu.\n", globalTime(), radiorcm->type);	
       atomic
         radioBusy = TRUE;
     }
@@ -109,9 +124,9 @@ implementation {
     radiorcm->type = 3;
     
     if (call RadioSend.send[AM_SPIN_META_MSG](AM_BROADCAST_ADDR, msg, sizeof(spin_meta_msg_t)) == SUCCESS) {
-      //dbg("Spin", "Spin: 'ADV' packet sent with content = %hu.\n", radiorcm->cnt);  
+      dbg("Spin", "SPIN <%i>: 'ADV' packet sent with content = %hu.\n", globalTime(), radiorcm->cnt);  
       call WatchDog.startOneShot(256);
-      //dbg("Spin", "Spin: Watchdog timer started on pid = %i.\n", currentPid);		
+      dbg("Spin", "SPIN <%i>: Watchdog timer started on pid = %i.\n", globalTime(), currentPid);		
       atomic
         radioBusy = TRUE;
     }
@@ -120,6 +135,7 @@ implementation {
   void request() {
     uint16_t delay;
     delay = call Random.rand16() & 0x32;
+    dbg("Spin", "SPIN <%i>: Plan to request packet of pid = 1, %i ticks later.\n", globalTime(), currentPid, delay);
     call RequestTimer.startOneShot(delay);
   }  
   
@@ -139,7 +155,7 @@ implementation {
     radiorcm->type = 4;
     
     if (call RadioSend.send[AM_SPIN_META_MSG](AM_BROADCAST_ADDR, msg, sizeof(spin_meta_msg_t)) == SUCCESS) {
-      //dbg("Spin", "Spin: 'REQ' packet sent with content = %hu.\n", currentPid);	
+      dbg("Spin", "SPIN <%i>: 'REQ' packet sent with pid = %hu.\n", globalTime(), currentPid);	
       atomic
         radioBusy = TRUE;
     }
@@ -158,19 +174,19 @@ implementation {
     }
     
     if (call RadioSend.send[AM_SPIN_MSG](AM_BROADCAST_ADDR, &radioQueue, sizeof(spin_msg_t)) == SUCCESS) {
-      //dbg("Spin", "Spin: Sending my packet of pid = %i.\n", radiorcm->pid);	
+      dbg("Spin", "SPIN <%i>: Sending my packet of pid = %i.\n", globalTime(), radiorcm->pid);	
       atomic
         radioBusy = TRUE;
     }
   }
   
   async command void SpinIF.send(spin_msg_t* payload, uint8_t len) {
-    message_t* msg;
     atomic {
       spinTransmitting = TRUE;
       currentPid = payload->pid;
     }
-    spinQueue = *payload;
+    atomic
+      spinQueue = *payload;
     advertise();
   }
   
@@ -181,13 +197,13 @@ implementation {
       if (TOS_NODE_ID == 1)
         syncedBefore = TRUE;
     }
-    dbg("Spin", "Spin: Initialized by SpinIF.start().\n");	
+    dbg("Spin", "SPIN: Initialized by SpinIF.start().\n");	
     call RadioControl.start();
   }
   
   event void RadioControl.startDone(error_t error) {
     if (error == SUCCESS) {
-      dbg("Spin", "Spin: Started successfully.\n");
+      dbg("Spin", "SPIN: Started successfully.\n");
       radioFull = FALSE;
     }
     signal SpinIF.startDone(error);
@@ -206,57 +222,91 @@ implementation {
   }
   
   message_t* receive(am_id_t id, message_t *msg, void *payload, uint8_t len) {
-    message_t *ret = msg;
     uint16_t delay;
     bool need;
     
     id = call RadioAMPacket.type(msg);
-    //dbg("Spin", "Spin: Received packet of am_id = %hu.\n", id);
+    //dbg("Spin", "SPIN <%i>: Received packet of am_id = %hu.\n", globalTime(), id);
 
     if (id == AM_SPIN_META_MSG && len == sizeof(spin_meta_msg_t)) { 
       spin_meta_msg_t* rcm = (spin_meta_msg_t*)payload;
+      
       if (rcm->type == SPIN_CMD_SYNC && syncedBefore == FALSE) {
-        //dbg("Spin", "Spin: Received a META packet of type CLOCK RESYNC ('SYNC').\n");
+        dbg("Spin", "SPIN: Received a META packet of type CLOCK RESYNC ('SYNC').\n");
         atomic {
           clockphase = call LocalTime.get() - rcm->cnt;
           syncedBefore = TRUE;
         }
-        dbg("Spin", "Spin: Clock synced to phase = %i.\n", clockphase);
+        dbg("Spin", "SPIN <%i>: Clock synced to phase = %i.\n", globalTime(), clockphase);
         delay = call Random.rand16() & 0x32;
         call MilliTimer.startOneShot(delay);
-        //dbg("Spin", "Spin: Forwarding CLOCK RESYNC ('SYNC') in %i ticks.\n", delay);
+        dbg("Spin", "SPIN <%i>: Forwarding CLOCK RESYNC ('SYNC') in %i ticks.\n", globalTime(), delay);
       } else if (rcm->type == 3) {
-        //dbg("Spin", "Spin: Received a META packet of type ADVERTISE ('ADV') of type %i.\n", rcm->cnt);
+        dbg("Spin", "SPIN <%i>: Received a META packet of type ADVERTISE ('ADV') of type %i.\n", globalTime(), rcm->cnt);
         need = signal SpinIF.isNeeded(rcm->cnt);
         if (requestedPid != rcm->cnt && need == TRUE) {
-          currentPid = rcm->cnt;
-          dbg("Spin", "Spin: Packet of pid = %i is needed by mote nid = %i.\n", currentPid, TOS_NODE_ID);
+          atomic
+            currentPid = rcm->cnt;
+          dbg("Spin", "SPIN <%i>: Packet of pid = %i is needed by mote nid = %i.\n", globalTime(), currentPid, TOS_NODE_ID);
           requestedPid = currentPid;
           request();
         }
       } else if (rcm->type == 4) {
-        
         if (advertisedPid == rcm->cnt) {	
-          //dbg("Spin", "Spin: Someone wants my packet of pid = %i.\n", rcm->cnt);
+          dbg("Spin", "SPIN <%i>: Someone wants my packet of pid = %i.\n", globalTime(), rcm->cnt);
           call WatchDog.stop();
           sendData();
         } else if (requestedPid == rcm->cnt){
-          //dbg("Spin", "Spin: Received REQ, no need to send personal REQ.\n");
+          dbg("Spin", "SPIN <%i>: Received REQ, no need to send personal REQ.\n", globalTime());
           call RequestTimer.stop();
         }
+      } else if (rcm->type == 5) {
+        uint32_t hash;
+        uint8_t forward = 0;
+        uint8_t i = 0;
+        hash = (rcm->nid << 16) + rcm->cnt;
+        if (TOS_NODE_ID != 1) {
+          for (i = 0; i < 8; i++) {
+            if (statCache[i] == hash) {
+              forward++;
+            }
+          }
+          
+          if (forward == 0){
+            statCache[cacheInd] = hash;
+            cacheInd++;
+            if (cacheInd > 7) {
+              cacheInd = 0;
+            }
+            dbg("Spin2", "GOT IT <%i>, %i, %i\n", hash, forward, rcm->nid);       
+            if (call RadioSend.send[AM_SPIN_META_MSG](AM_BROADCAST_ADDR, msg, sizeof(spin_meta_msg_t)) == SUCCESS) {
+              dbg("Spin2", "<%i>: 'SYNC' packet sent.\n", globalTime());	
+              atomic
+                radioBusy = TRUE;
+            }   
+          } else {
+            dbg("Spin2", "%i %i %i %i %i %i %i %i\n", statCache[0], statCache[1], statCache[2], statCache[3], statCache[4], statCache[5], statCache[6], statCache[7], statCache[8]);
         
+          }
+        } else {
+          //dbg("SpinTestC", "hi");
+          signal SpinIF.receivedStat(rcm->cnt, rcm->nid);
+        }
       }
     } else if (id == AM_SPIN_MSG && len == sizeof(spin_msg_t)) {
       spin_msg_t* rcmt = (spin_msg_t*)payload;
-      atomic
+      uint16_t pid;
+      atomic {
         spinQueue = *rcmt;
-     if (spinQueue.pid > 0 && spinQueue.pid == requestedPid) {
+        pid = spinQueue.pid;
+      }
+      if (pid > 0 && pid == requestedPid) {
         requestedPid = 0;
         receivedTime = call LocalTime.get() - clockphase;
-        dbg("Spin", "Spin: Received DATA packet of pid = %i at time = %i.\n", spinQueue.pid, receivedTime);
+        dbg("Spin", "SPIN <%i>: Received DATA packet of pid = %i.\n", receivedTime, spinQueue.pid);
         signal SpinIF.receivedRequested(&spinQueue);
         advertise();
-     }
+      }
     }
     return msg;
   }
@@ -277,7 +327,7 @@ implementation {
   }
   
   event void WatchDog.fired() {
-    //dbg("Spin", "Spin: Spin timed out while sending message. Maybe resend?\n");
+    dbg("Spin", "SPIN <%i>: Spin timed out while sending message. Maybe resend?\n", globalTime());
   }
   
 }

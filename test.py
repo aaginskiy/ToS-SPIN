@@ -9,7 +9,7 @@ m = t.mac()
 r = t.radio()
 
 
-sf = SerialForwarder(9001)
+sf = SerialForwarder(9002)
 throttle = Throttle(t, 10)
 
 f = open("topo.txt", "r")
@@ -22,7 +22,7 @@ for line in lines:
     r.add(int(s[0]), int(s[1]), float(s[2]))
 
 t.addChannel("SpinTestC", sys.stdout)
-t.addChannel("Spin", sys.stdout)
+#t.addChannel("Serial", sys.stdout)
 
 noise = open("meyer-heavy-simple.txt", "r")
 lines = noise.readlines()
@@ -62,7 +62,18 @@ serialpkt.setType(msg.get_amType())
 serialpkt.setDestination(1)
 serialpkt.deliver(1, t.time() + 10)
 
-for i in range(0, 500):
+for i in range(0, 1500):
+  throttle.checkThrottle();
+  t.runNextEvent();
+  sf.process();
+
+serialpkt = t.newSerialPacket();
+serialpkt.setData(msg.data)
+serialpkt.setType(msg.get_amType())
+serialpkt.setDestination(1)
+serialpkt.deliver(1, t.time() + 10)
+
+for i in range(0, 1200):
   throttle.checkThrottle();
   t.runNextEvent();
   sf.process();

@@ -11,7 +11,8 @@ typedef nx_struct spin_msg {
 
 typedef nx_struct spin_meta_msg {
   nx_uint16_t type;
-  nx_uint16_t cnt;
+  nx_uint32_t cnt;
+  nx_uint16_t nid;
 } spin_meta_msg_t;
 
 enum {

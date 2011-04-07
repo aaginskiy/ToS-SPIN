@@ -5,8 +5,10 @@ implementation {
   components MainC, SpinTestC as App, LedsC;
   components new TimerMilliC() as Timer0;
   components new TimerMilliC() as Timer1;
+  components new TimerMilliC() as Timer2;
   components LocalTimeMilliC as LT;
   components SpinC;
+  components RandomC;
   
   
   // Serial
@@ -17,8 +19,11 @@ implementation {
   App.Leds -> LedsC;
   App.MilliTimer -> Timer0;
   App.Time -> Timer1;
+  App.ResetWant -> Timer2;
   App.LocalTime -> LT;
   App.Spin -> SpinC;
+  
+  App.Random -> RandomC;
   
   // Serial
   App.SerialControl -> AM;
