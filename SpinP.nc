@@ -66,12 +66,7 @@ implementation {
     }
     atomic
     {
-      if (TOS_NODE_ID == 1) {
-        radiorcm->cnt = call LocalTime.get(); 
-      } else {
-        radiorcm->cnt = call LocalTime.get() - clockphase; 
-        
-      }
+      radiorcm->cnt = call LocalTime.get() - clockphase; 
     }
     radiorcm->type = 2;
     
@@ -86,6 +81,8 @@ implementation {
     message_t* msg;
     spin_meta_msg_t* radiorcm;
     msg = &radioQueue;
+    
+    syncedBefore = FALSE;
     
     dbg("Spin2", "sendStat()\n");
     
